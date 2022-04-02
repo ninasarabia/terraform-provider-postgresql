@@ -3,10 +3,12 @@ package postgresql
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/blang/semver"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"golang.org/x/oauth2/google"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
@@ -254,5 +256,47 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 	}
 
 	client := config.NewClient(d.Get("database").(string))
+
+	if config.Scheme == "gcppostgres" {
+		shimADC()
+	}
+
 	return client, nil
+}
+
+func shimADC() (err error) {
+	// Early return; nothing to do.
+	if _, err = google.FindDefaultCredentials(context.Background()); err == nil {
+		return err
+	}
+
+	// terraform-provider-google expects JSON in GOOGLE_CREDENTIALS, convert
+	// that into a JSON file and use it as GOOGLE_APPLICATION_CREDENTIALS
+	googleCredentials := os.Getenv("GOOGLE_CREDENTIALS_LOCAL_DEVELOPMENT")
+	if googleCredentials == "" {
+		return nil
+	}
+
+	f, err := os.CreateTemp("", "")
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		ferr := f.Close()
+		if err == nil {
+			err = ferr
+		}
+	}()
+
+	_, err = f.WriteString(googleCredentials)
+	if err != nil {
+		return err
+	}
+
+	if err = os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", f.Name()); err != nil {
+		return err
+	}
+
+	return nil
 }
